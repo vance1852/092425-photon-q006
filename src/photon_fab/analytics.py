@@ -49,10 +49,29 @@ def confidence_interval(values: Iterable[float], confidence: float = 0.95) -> tu
     return mean - margin, mean + margin
 
 
-def yield_rate(total: int, passed: int, rejected: int = 0) -> dict[str, float]:
-    if total <= 0 or passed < 0 or rejected < 0 or passed + rejected > total:
-        raise ValueError("inconsistent lot counts")
-    return {"yield": passed / total, "reject_rate": rejected / total, "unknown_rate": (total - passed - rejected) / total}
+def yield_rate(total: int, passed: int, rejected: int = 0) -> dict[str, float | int | None]:
+    """按明确结论统计良率，未测试样本单独计为 unknown。
+
+    只有明确通过或拒绝的样本参与 yield/reject_rate；unknown 不进入这两个比例。
+    计数不一致（负数和超过总数）一律拒绝。
+    """
+    if total <= 0:
+        raise ValueError("lot total must be positive")
+    if passed < 0 or rejected < 0:
+        raise ValueError(f"inconsistent lot counts: negative counts (passed={passed}, rejected={rejected})")
+    if passed + rejected > total:
+        raise ValueError(f"inconsistent lot counts: passed ({passed}) + rejected ({rejected}) exceed total ({total})")
+    tested = passed + rejected
+    unknown = total - tested
+    return {
+        "total": total,
+        "passed": passed,
+        "rejected": rejected,
+        "unknown": unknown,
+        "yield": passed / tested if tested else None,
+        "reject_rate": rejected / tested if tested else None,
+        "unknown_rate": unknown / total,
+    }
 
 
 def responsivity(current_ma: float, optical_power_mw: float) -> float:

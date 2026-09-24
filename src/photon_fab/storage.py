@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -25,6 +26,12 @@ CREATE TABLE IF NOT EXISTS lot_events(
 CREATE TABLE IF NOT EXISTS approvals(
  lot_id TEXT NOT NULL, reviewer TEXT NOT NULL, decision TEXT NOT NULL,
  reason TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(lot_id,reviewer));
+CREATE TABLE IF NOT EXISTS analysis_reports(
+ report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+ lot_id TEXT NOT NULL REFERENCES chip_lots(lot_id),
+ input_sha256 TEXT NOT NULL, result_json TEXT NOT NULL,
+ created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+ UNIQUE(lot_id,input_sha256));
 """
 
 
@@ -32,8 +39,17 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def digest(value: object) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
 def connect(path: str = ":memory:") -> sqlite3.Connection:
-    db = sqlite3.connect(path)
+    # 写操作由 BEGIN IMMEDIATE 事务串行化，连接可安全地跨请求线程共享。
+    db = sqlite3.connect(path, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.executescript(SCHEMA)

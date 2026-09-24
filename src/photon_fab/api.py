@@ -23,17 +23,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._json(200, {"status": "ok", "service": "photon-fab"})
-        if self.path.startswith("/lots/"):
-            try:
-                token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+        try:
+            token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+            if self.path.startswith("/lots/") and self.path.endswith("/analysis"):
+                return self._json(200, self.service.get_analysis(token, self.path.split("/")[2]))
+            if self.path.startswith("/lots/"):
                 return self._json(200, self.service.get_lot(token, self.path.split("/", 2)[2]))
-            except Exception as exc:
-                return self._json(400, {"error": str(exc)})
-        return self._json(404, {"error": "not found"})
+            return self._json(404, {"error": "not found"})
+        except PermissionError as exc:
+            return self._json(403, {"error": str(exc)})
+        except Exception as exc:
+            return self._json(400, {"error": str(exc)})
 
     def do_POST(self):
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            body = json.loads(raw) if raw.strip() else {}
             if self.path == "/login":
                 return self._json(200, {"token": self.service.auth.login(body["user_id"], body["password"])})
             token = self.headers.get("Authorization", "").removeprefix("Bearer ")

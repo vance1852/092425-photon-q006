@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Sequence
 
 from .analytics import confidence_interval, summarize_spectrum, yield_rate
 from .auth import Auth
-from .storage import connect, event, transaction, utcnow
+from .storage import canonical_json, connect, digest, event, transaction, utcnow
+
+
+YIELD_PASS_THRESHOLD = 0.8
+ANALYSIS_ALGORITHM_VERSION = "photon-analyze-1"
 
 
 class PhotonService:
@@ -49,14 +54,61 @@ class PhotonService:
         return {"measurement_id": measurement_id, "lot_id": lot_id}
 
     def analyze(self, token: str, lot_id: str) -> dict:
-        self.auth.require(token, "analyze")
+        actor = self.auth.require(token, "analyze")
         rows = self.db.execute("SELECT wavelength_nm,response FROM measurements WHERE lot_id=? ORDER BY wavelength_nm", (lot_id,)).fetchall()
         if len(rows) < 3:
             raise ValueError("three measurements are required")
-        summary = summarize_spectrum([r[0] for r in rows], [r[1] for r in rows])
-        rates = yield_rate(self.get_lot(token, lot_id)["wafer_count"], sum(1 for r in rows if r[1] >= 0.8), 0)
-        ci = confidence_interval([r[1] for r in rows])
-        return {"lot_id": lot_id, "spectrum": summary.__dict__, "yield": rates, "response_ci": ci}
+        wafer_count = self.get_lot(token, lot_id)["wafer_count"]
+        if len(rows) > wafer_count:
+            raise ValueError(f"inconsistent lot counts: {len(rows)} tested wafers exceed lot size {wafer_count}")
+        passed = sum(1 for r in rows if r[1] >= YIELD_PASS_THRESHOLD)
+        rejected = len(rows) - passed
+        snapshot = {
+            "algorithm": ANALYSIS_ALGORITHM_VERSION,
+            "lot_id": lot_id,
+            "wafer_count": wafer_count,
+            "measurements": [[r[0], r[1]] for r in rows],
+        }
+        input_sha256 = digest(snapshot)
+        with transaction(self.db):
+            existing = self.db.execute(
+                "SELECT report_id,result_json FROM analysis_reports WHERE lot_id=? AND input_sha256=?",
+                (lot_id, input_sha256),
+            ).fetchone()
+            if existing:
+                report_id = existing["report_id"]
+                report = json.loads(existing["result_json"])
+                replayed = True
+            else:
+                summary = summarize_spectrum([r[0] for r in rows], [r[1] for r in rows])
+                rates = yield_rate(wafer_count, passed, rejected)
+                ci = confidence_interval([r[1] for r in rows])
+                # 经规范化 JSON 往返一次，保证首次返回与历史重读逐字节一致。
+                report = json.loads(canonical_json({
+                    "lot_id": lot_id,
+                    "spectrum": summary.__dict__,
+                    "yield": rates,
+                    "response_ci": ci,
+                }))
+                cursor = self.db.execute(
+                    "INSERT INTO analysis_reports(lot_id,input_sha256,result_json,created_by,created_at) VALUES(?,?,?,?,?)",
+                    (lot_id, input_sha256, canonical_json(report), actor.user_id, utcnow()),
+                )
+                report_id = cursor.lastrowid
+                event(self.db, lot_id, "analysis", actor.user_id, {"report_id": report_id, "input_sha256": input_sha256})
+                replayed = False
+        return {"report_id": report_id, "input_sha256": input_sha256, "replayed": replayed, **report}
+
+    def get_analysis(self, token: str, lot_id: str) -> dict:
+        """读取最近一份已持久化的分析报告，内容不随新测量漂移。"""
+        self.auth.require(token, "read")
+        row = self.db.execute(
+            "SELECT report_id,input_sha256,result_json FROM analysis_reports WHERE lot_id=? ORDER BY report_id DESC LIMIT 1",
+            (lot_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(lot_id)
+        return {"report_id": row["report_id"], "input_sha256": row["input_sha256"], "replayed": True, **json.loads(row["result_json"])}
 
     def approve(self, token: str, lot_id: str, decision: str, reason: str) -> dict:
         actor = self.auth.require(token, "approve")
