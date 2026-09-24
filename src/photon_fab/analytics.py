@@ -50,9 +50,20 @@ def confidence_interval(values: Iterable[float], confidence: float = 0.95) -> tu
 
 
 def yield_rate(total: int, passed: int, rejected: int = 0) -> dict[str, float]:
-    if total <= 0 or passed < 0 or rejected < 0 or passed + rejected > total:
+    """按已判定样本计算良率，未知（尚未完成测试）样本单独统计。
+
+    良率与拒绝率只统计明确通过或拒绝的样本；``unknown_rate`` 为未知
+    样本占批次总数的比例。总数、通过数和拒绝数不一致时抛出
+    ``ValueError``，由调用方拒绝请求。
+    """
+    if total < 0 or passed < 0 or rejected < 0 or passed + rejected > total:
         raise ValueError("inconsistent lot counts")
-    return {"yield": passed / total, "reject_rate": rejected / total, "unknown_rate": (total - passed - rejected) / total}
+    decided = passed + rejected
+    if decided == 0:
+        decided_rates = {"yield": 0.0, "reject_rate": 0.0}
+    else:
+        decided_rates = {"yield": passed / decided, "reject_rate": rejected / decided}
+    return {**decided_rates, "unknown_rate": (total - decided) / total if total else 0.0}
 
 
 def responsivity(current_ma: float, optical_power_mw: float) -> float:

@@ -66,6 +66,8 @@ PYTHONPATH=src python3 -m photon_fab.api --database photon.sqlite3 --port 8080
 
 HTTP 健康检查为 `GET /health`，登录、批次、测量和分析请求均支持 JSON；服务不访问外部网络，可在单个 Linux 应用容器中完成验收。
 
+晶圆结果通过 `POST /lots/{lot_id}/wafers` 录入（`outcome` 仅允许 `passed` 或 `rejected`，未录入即为未完成测试）。分析请求 `POST /lots/{lot_id}/analysis` 可在 `counts` 中提交 `total`/`passed`/`rejected`：良率与拒绝率只统计明确判定的晶圆，未完成测试的晶圆计入 `unknown_rate`；计数相互矛盾或与批次晶圆数不符时返回 `400` 并说明原因。分析结果作为不可变报告存入 `analysis_reports`，可通过 `GET /lots/{lot_id}/report` 重新读取，后续追加测量或重启服务都不会改变历史报告。
+
 ## HTTP 服务
 
 ```bash

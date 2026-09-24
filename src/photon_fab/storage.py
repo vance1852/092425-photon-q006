@@ -22,6 +22,15 @@ CREATE TABLE IF NOT EXISTS measurements(
 CREATE TABLE IF NOT EXISTS lot_events(
  event_id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id TEXT NOT NULL,
  event_type TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wafer_results(
+ lot_id TEXT NOT NULL REFERENCES chip_lots(lot_id),
+ wafer_index INTEGER NOT NULL,
+ outcome TEXT NOT NULL CHECK(outcome IN ('passed','rejected')),
+ recorded_by TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ PRIMARY KEY(lot_id,wafer_index));
+CREATE TABLE IF NOT EXISTS analysis_reports(
+ lot_id TEXT PRIMARY KEY REFERENCES chip_lots(lot_id),
+ body TEXT NOT NULL, generated_by TEXT NOT NULL, generated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS approvals(
  lot_id TEXT NOT NULL, reviewer TEXT NOT NULL, decision TEXT NOT NULL,
  reason TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(lot_id,reviewer));
@@ -32,8 +41,8 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def connect(path: str = ":memory:") -> sqlite3.Connection:
-    db = sqlite3.connect(path)
+def connect(path: str = ":memory:", check_same_thread: bool = True) -> sqlite3.Connection:
+    db = sqlite3.connect(path, check_same_thread=check_same_thread)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.executescript(SCHEMA)
